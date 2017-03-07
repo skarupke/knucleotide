@@ -78,10 +78,8 @@ struct RunningHash
 
 #define MULTI_THREADED
 #ifdef MULTI_THREADED
-unsigned NUM_THREADS = sysconf (_SC_NPROCESSORS_ONLN) - 1;
 std::launch launch_policy = std::launch::async;
 #else
-unsigned NUM_THREADS = 0;
 std::launch launch_policy = std::launch::deferred;
 #endif
 
@@ -107,7 +105,11 @@ HashMap calculate(const char * begin, const char * end, unsigned size)
 
 HashMap tcalculate(const std::string& input,unsigned size)
 {
+#ifdef MULTI_THREADED
    unsigned NUM_THREADS = sysconf (_SC_NPROCESSORS_ONLN) - 1;
+#else
+   unsigned NUM_THREADS = 0;
+#endif
 
    std::vector<std::future<HashMap>> ft(NUM_THREADS);
    const char * begin = input.c_str();
