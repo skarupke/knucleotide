@@ -4,8 +4,6 @@
    Contributed by Branimir Maksimovic
 */
 
-// g++ 4.8.x bug, compile with: -Wl,--no-as-needed option 
-
 #include <iostream>
 #include <iomanip>
 #include <cstdint>
@@ -17,20 +15,22 @@
 #include "flat_hash_map.hpp"
 #include <future>
 #include <unistd.h>
+#include <ext/pb_ds/assoc_container.hpp>
 
-constexpr const unsigned char tochar[4] = { 'A', 'C', 'T', 'G' };
+constexpr const unsigned char tochar[8] = { 'A', 'A', 'C', 'C', 'T', 'T', 'G', 'G' };
 
 uint64_t mask_for_size(unsigned size)
 {
-   return (1llu << (2llu * size)) - 1llu;
+   return (1llu << ((size << 1llu) + 1llu)) - 1llu;
 }
 
-struct T{
-   T()
+struct RunningHash
+{
+   RunningHash()
       : data(0)
    {
    }
-   T(const std::string& s)
+   RunningHash(const std::string& s)
       : data(0)
    {
       uint64_t mask = mask_for_size(s.size());
@@ -43,13 +43,13 @@ struct T{
    {
       data <<= 2;
       data &= mask;
-      data |= (c >> 1) & 0b11;
+      data |= c & 0b110;
    }
-   bool operator<(const T& in)const
+   bool operator<(const RunningHash & in)const
    {
       return data < in.data;
    }
-   bool operator==(const T& in)const
+   bool operator==(const RunningHash & in)const
    {
       return data == in.data;
    }
@@ -59,15 +59,15 @@ struct T{
       uint64_t tmp1 = data;
       for(unsigned i = 0; i != size; ++i)
       {
-         tmp += tochar[tmp1 & 3];
+         tmp += tochar[tmp1 & 0b110];
          tmp1 >>= 2;
       }
-      std::reverse(tmp.begin(),tmp.end());
+      std::reverse(tmp.begin(), tmp.end());
       return tmp;
    }
    struct hash
    {
-      uint64_t operator()(const T& t)const
+      uint64_t operator()(const RunningHash & t) const
       {
          return t.data;
       }
@@ -76,10 +76,22 @@ struct T{
    uint64_t data;
 };
 
-ska::flat_hash_map<T,unsigned,T::hash> calculate(const char * begin, const char * end, unsigned size)
+#define MULTI_THREADED
+#ifdef MULTI_THREADED
+unsigned NUM_THREADS = sysconf (_SC_NPROCESSORS_ONLN) - 1;
+std::launch launch_policy = std::launch::async;
+#else
+unsigned NUM_THREADS = 0;
+std::launch launch_policy = std::launch::deferred;
+#endif
+
+//typedef __gnu_pbds::cc_hash_table<RunningHash, unsigned, RunningHash::hash> HashMap;
+typedef ska::flat_hash_map<RunningHash, unsigned, RunningHash::hash> HashMap;
+
+HashMap calculate(const char * begin, const char * end, unsigned size)
 {
-   ska::flat_hash_map<T,unsigned,T::hash> frequencies;
-   T tmp;
+   HashMap frequencies;
+   RunningHash tmp;
    uint64_t mask = mask_for_size(size);
    for (const char * init_end = begin + size - 1; begin != init_end; ++begin)
    {
@@ -88,29 +100,29 @@ ska::flat_hash_map<T,unsigned,T::hash> calculate(const char * begin, const char 
    for (; begin != end; ++begin)
    {
       tmp.push(*begin, mask);
-      ++frequencies[tmp];
+      ++frequencies[RunningHash(tmp)];
    }
    return frequencies;
 }
 
-ska::flat_hash_map<T,unsigned,T::hash> tcalculate(const std::string& input,unsigned size)
+HashMap tcalculate(const std::string& input,unsigned size)
 {
-   unsigned N = sysconf (_SC_NPROCESSORS_ONLN) - 1;
+   unsigned NUM_THREADS = sysconf (_SC_NPROCESSORS_ONLN) - 1;
 
-   std::vector<std::future<ska::flat_hash_map<T,unsigned,T::hash>>> ft(N);
+   std::vector<std::future<HashMap>> ft(NUM_THREADS);
    const char * begin = input.c_str();
    const char * end = input.c_str() + input.size();
-   unsigned per_thread = input.size() / N;
-   for(unsigned i = 1; i < N; ++i)
+   unsigned per_thread = input.size() / NUM_THREADS;
+   for(unsigned i = 1; i < NUM_THREADS; ++i)
    {
       const char * this_end = begin + per_thread + size - 1;
-      ft[i] = std::async(std::launch::async, &calculate, begin, this_end, size);
+      ft[i] = std::async(launch_policy, &calculate, begin, this_end, size);
       begin += per_thread;
    }
 
    auto frequencies = calculate(begin, end, size);
 
-   for(unsigned i = 1; i < N; ++i)
+   for(unsigned i = 1; i < NUM_THREADS; ++i)
    {
       for(auto && j : ft[i].get())
       {
@@ -170,11 +182,11 @@ int main()
    }
 
    std::cout << std::setprecision(3) << std::setiosflags(std::ios::fixed);
-   std::future<unsigned> GGTATTTTAATTTATAGT = std::async(std::launch::async, compute_count, input, "GGTATTTTAATTTATAGT");
-   std::future<unsigned> GGTATTTTAATT = std::async(std::launch::async, compute_count, input, "GGTATTTTAATT");
-   std::future<unsigned> GGTATT = std::async(std::launch::async, compute_count, input, "GGTATT");
-   std::future<unsigned> GGTA = std::async(std::launch::async, compute_count, input, "GGTA");
-   std::future<unsigned> GGT = std::async(std::launch::async, compute_count, input, "GGT");
+   std::future<unsigned> GGTATTTTAATTTATAGT = std::async(launch_policy, compute_count, input, "GGTATTTTAATTTATAGT");
+   std::future<unsigned> GGTATTTTAATT = std::async(launch_policy, compute_count, input, "GGTATTTTAATT");
+   std::future<unsigned> GGTATT = std::async(launch_policy, compute_count, input, "GGTATT");
+   std::future<unsigned> GGTA = std::async(launch_policy, compute_count, input, "GGTA");
+   std::future<unsigned> GGT = std::async(launch_policy, compute_count, input, "GGT");
    write_frequencies(input,1);
    write_frequencies(input,2);
    write_single_count(GGT.get(), "GGT");
